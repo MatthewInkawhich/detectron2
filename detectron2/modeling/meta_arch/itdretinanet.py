@@ -1,4 +1,6 @@
+# MatthewInkawhich
 # Copyright (c) Facebook, Inc. and its affiliates.
+
 import logging
 import math
 import numpy as np
@@ -14,14 +16,14 @@ from detectron2.layers import ShapeSpec, batched_nms, cat, get_norm
 from detectron2.structures import Boxes, ImageList, Instances, pairwise_iou
 from detectron2.utils.events import get_event_storage
 
-from ..anchor_generator import build_anchor_generator
+from ..anchor_generator import build_itd_anchor_generator
 from ..backbone import build_backbone
 from ..box_regression import Box2BoxTransform
 from ..matcher import Matcher
 from ..postprocessing import detector_postprocess
 from .build import META_ARCH_REGISTRY
 
-__all__ = ["RetinaNet"]
+__all__ = ["ITDRetinaNet"]
 
 
 def permute_to_N_HWA_K(tensor, K):
@@ -37,18 +39,13 @@ def permute_to_N_HWA_K(tensor, K):
 
 
 @META_ARCH_REGISTRY.register()
-class RetinaNet(nn.Module):
-    """
-    Implement RetinaNet in :paper:`RetinaNet`.
-    """
-
+class ITDRetinaNet(nn.Module):
     @configurable
     def __init__(
         self,
         *,
         backbone,
         head,
-        head_in_features,
         anchor_generator,
         box2box_transform,
         anchor_matcher,
@@ -73,7 +70,6 @@ class RetinaNet(nn.Module):
             backbone: a backbone module, must follow detectron2's backbone interface
             head (nn.Module): a module that predicts logits and regression deltas
                 for each level from a list of per-level features
-            head_in_features (Tuple[str]): Names of the input feature maps to be used in head
             anchor_generator (nn.Module): a module that creates anchors from a
                 list of features. Usually an instance of :class:`AnchorGenerator`
             box2box_transform (Box2BoxTransform): defines the transform from anchors boxes to
@@ -115,7 +111,6 @@ class RetinaNet(nn.Module):
 
         self.backbone = backbone
         self.head = head
-        self.head_in_features = head_in_features
 
         # Anchors
         self.anchor_generator = anchor_generator
@@ -152,13 +147,8 @@ class RetinaNet(nn.Module):
     @classmethod
     def from_config(cls, cfg):
         backbone = build_backbone(cfg)
-        backbone_shape = backbone.output_shape()
-        feature_shapes = [backbone_shape[f] for f in cfg.MODEL.RETINANET.IN_FEATURES]
-        #print("backbone_shape:", backbone_shape)
-        #print("feature_shapes:", feature_shapes)
-        #exit()
-        head = RetinaNetHead(cfg, feature_shapes)
-        anchor_generator = build_anchor_generator(cfg, feature_shapes)
+        head = ITDRetinaNetHead(cfg)
+        anchor_generator = build_itd_anchor_generator(cfg)
         return {
             "backbone": backbone,
             "head": head,
@@ -172,7 +162,6 @@ class RetinaNet(nn.Module):
             "pixel_mean": cfg.MODEL.PIXEL_MEAN,
             "pixel_std": cfg.MODEL.PIXEL_STD,
             "num_classes": cfg.MODEL.RETINANET.NUM_CLASSES,
-            "head_in_features": cfg.MODEL.RETINANET.IN_FEATURES,
             # Loss parameters:
             "focal_loss_alpha": cfg.MODEL.RETINANET.FOCAL_LOSS_ALPHA,
             "focal_loss_gamma": cfg.MODEL.RETINANET.FOCAL_LOSS_GAMMA,
@@ -227,7 +216,7 @@ class RetinaNet(nn.Module):
         vis_name = f"Top: GT bounding boxes; Bottom: {max_boxes} Highest Scoring Results"
         storage.put_image(vis_name, vis_img)
 
-    def forward(self, batched_inputs):
+    def forward(self, batched_inputs, config_combo):
         """
         Args:
             batched_inputs: a list, batched outputs of :class:`DatasetMapper` .
@@ -249,14 +238,13 @@ class RetinaNet(nn.Module):
         images = self.preprocess_image(batched_inputs)
         print("images:", images.tensor.shape)
         # Forward thru backbone to get features dict: {"p3":tensor(B,3,H,W) ..., "p7":tensor(B,3,H,W)}
-        features = self.backbone(images.tensor)
+        features = self.backbone(images.tensor, config_combo)
         # Convert features to list of feature tensors
-        features = [features[f] for f in self.head_in_features]
         print("features:")
         for fi, f in enumerate(features):
             print(fi, f.shape)
         # Generate anchors
-        anchors = self.anchor_generator(features)
+        anchors = self.anchor_generator(features, images.tensor.shape)
         print("anchors:")
         for bi, b in enumerate(anchors):
             print(bi, b.tensor.shape)
@@ -523,20 +511,15 @@ class RetinaNet(nn.Module):
         return images
 
 
-class RetinaNetHead(nn.Module):
-    """
-    The head used in RetinaNet for object classification and box regression.
-    It has two subnets for the two tasks, with a common structure but separate parameters.
-    """
-
+class ITDRetinaNetHead(nn.Module):
     @configurable
     def __init__(
         self,
         *,
-        input_shape: List[ShapeSpec],
         num_classes,
         num_anchors,
-        conv_dims: List[int],
+        num_convs,
+        channels,
         norm="",
         prior_prob=0.01,
     ):
@@ -544,9 +527,10 @@ class RetinaNetHead(nn.Module):
         NOTE: this interface is experimental.
 
         Args:
-            input_shape (List[ShapeSpec]): input shape
             num_classes (int): number of classes. Used to label background proposals.
             num_anchors (int): number of generated anchors
+            num_convs (int): number of subnet layers
+            channels (int): channels for convs
             conv_dims (List[int]): dimensions for each convolution layer
             norm (str or callable):
                     Normalization for conv layers except for the two output layers.
@@ -559,29 +543,32 @@ class RetinaNetHead(nn.Module):
             logger = logging.getLogger(__name__)
             logger.warn("Shared norm does not work well for BN, SyncBN, expect poor results")
 
+        # Build cls and bbox subnets
         cls_subnet = []
         bbox_subnet = []
-        for in_channels, out_channels in zip([input_shape[0].channels] + conv_dims, conv_dims):
+        for _ in range(num_convs):
             cls_subnet.append(
-                nn.Conv2d(in_channels, out_channels, kernel_size=3, stride=1, padding=1)
+                nn.Conv2d(channels, channels, kernel_size=3, stride=1, padding=1)
             )
             if norm:
-                cls_subnet.append(get_norm(norm, out_channels))
+                cls_subnet.append(get_norm(norm, channels))
             cls_subnet.append(nn.ReLU())
             bbox_subnet.append(
-                nn.Conv2d(in_channels, out_channels, kernel_size=3, stride=1, padding=1)
+                nn.Conv2d(channels, channels, kernel_size=3, stride=1, padding=1)
             )
             if norm:
-                bbox_subnet.append(get_norm(norm, out_channels))
+                bbox_subnet.append(get_norm(norm, channels))
             bbox_subnet.append(nn.ReLU())
 
         self.cls_subnet = nn.Sequential(*cls_subnet)
         self.bbox_subnet = nn.Sequential(*bbox_subnet)
+
+        # Build cls and bbox heads
         self.cls_score = nn.Conv2d(
-            conv_dims[-1], num_anchors * num_classes, kernel_size=3, stride=1, padding=1
+            channels, num_anchors * num_classes, kernel_size=3, stride=1, padding=1
         )
         self.bbox_pred = nn.Conv2d(
-            conv_dims[-1], num_anchors * 4, kernel_size=3, stride=1, padding=1
+            channels, num_anchors * 4, kernel_size=3, stride=1, padding=1
         )
 
         # Initialization
@@ -596,18 +583,18 @@ class RetinaNetHead(nn.Module):
         torch.nn.init.constant_(self.cls_score.bias, bias_value)
 
     @classmethod
-    def from_config(cls, cfg, input_shape: List[ShapeSpec]):
-        num_anchors = build_anchor_generator(cfg, input_shape).num_cell_anchors
+    def from_config(cls, cfg):
+        num_anchors = build_itd_anchor_generator(cfg).num_cell_anchors
         assert (
             len(set(num_anchors)) == 1
         ), "Using different number of anchors between levels is not currently supported!"
         num_anchors = num_anchors[0]
 
         return {
-            "input_shape": input_shape,
             "num_classes": cfg.MODEL.RETINANET.NUM_CLASSES,
-            "conv_dims": [input_shape[0].channels] * cfg.MODEL.RETINANET.NUM_CONVS,
             "prior_prob": cfg.MODEL.RETINANET.PRIOR_PROB,
+            "num_convs": cfg.MODEL.RETINANET.NUM_CONVS,
+            "channels": cfg.MODEL.ITD_FPN.OUT_CHANNELS,
             "norm": cfg.MODEL.RETINANET.NORM,
             "num_anchors": num_anchors,
         }

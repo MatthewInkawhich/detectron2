@@ -165,7 +165,8 @@ def do_train(cfg, model, resume=False):
                     if k == "image":
                         print(v.shape)
 
-            loss_dict = model(data)
+            config_combo = ((1,2,0,6), (), ())
+            loss_dict = model(data, config_combo)
 
             exit()
 

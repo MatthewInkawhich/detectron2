@@ -122,6 +122,11 @@ class FPN(Backbone):
         """
         # Reverse feature maps into top-down order (from low to high resolution)
         bottom_up_features = self.bottom_up(x)
+
+        #print("bottom_up_features:")
+        #for k, v in bottom_up_features.items():
+        #    print(k, v.shape)
+
         x = [bottom_up_features[f] for f in self.in_features[::-1]]
         results = []
         prev_features = self.lateral_convs[0](x[0])

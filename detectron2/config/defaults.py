@@ -461,6 +461,38 @@ _C.MODEL.RETINANET.BBOX_REG_LOSS_TYPE = "smooth_l1"
 _C.MODEL.RETINANET.NORM = ""
 
 
+
+# ---------------------------------------------------------------------------- #
+# Inference-Time Dynamic backbone options
+# ---------------------------------------------------------------------------- #
+_C.MODEL.ITD_BACKBONE = CN()
+
+_C.MODEL.ITD_BACKBONE.NORM = "FrozenBN"
+_C.MODEL.ITD_BACKBONE.STRIDE_OPTIONS = [[False, [2,2]], [False, [2,1]], [False, [1,2]], [False, [1,1]], [True, [1,2]], [True, [2,1]], [True, [2,2]]]
+_C.MODEL.ITD_BACKBONE.DILATION_OPTIONS = [[1,1], [2,2], [3,3], [4,4], [5,5]]
+_C.MODEL.ITD_BACKBONE.KSIZE_OPTIONS = [[1,1], [3,3], [5,5], [7,7], [9,9]]
+
+_C.MODEL.ITD_BACKBONE.STRIDE_CONFIG = [[0,3], [0,3], [0,3], [0,0], [0,3], [0,3], [0,3], [0,0], [0,3], [0,3], [0,3], [0,3], [0,3], [0,0], [0,3], [0,3]]
+_C.MODEL.ITD_BACKBONE.DILATION_CONFIG = [[0,0], [0,0], [0,0], [0,0], [0,0], [0,0], [0,0], [0,0], [0,0], [0,0], [0,0], [0,0], [0,0], [0,0], [0,0], [0,0]]
+_C.MODEL.ITD_BACKBONE.KSIZE_CONFIG = [[0,1], [0,1], [0,1], [0,1], [0,1], [0,1], [0,1], [0,1], [0,1], [0,1], [0,1], [0,1], [0,1], [0,1], [0,1], [0,1]]
+
+_C.MODEL.ITD_BACKBONE.STEM_CHANNELS = 64
+_C.MODEL.ITD_BACKBONE.BODY_CHANNELS = [[64, 64, 256], [256, 64, 256], [256, 64, 256], [256, 128, 512], [512, 128, 512], [512, 128, 512], [512, 128, 512],[512, 256, 1024], [1024, 256, 1024], [1024, 256, 1024], [1024, 256, 1024], [1024, 256, 1024], [1024, 256, 1024], [1024, 512, 2048], [2048, 512, 2048], [2048, 512, 2048]]
+
+_C.MODEL.ITD_BACKBONE.RETURN_FEATURES = [False, False, False, False, False, False, True, False, False, False, False, False, True, False, False, True]
+_C.MODEL.ITD_BACKBONE.DOWNSAMPLE_BOUNDS = [[64,4], [64,4], [64,4], [64,4], [64,4], [64,4], [64,4], [64,8], [64,8], [64,8], [64,8], [64,8], [64,8], [64,8], [64,8], [64,8]]
+_C.MODEL.ITD_BACKBONE.NUM_FEATURES = 5
+
+# ---------------------------------------------------------------------------- #
+# Inference-Time Dynamic backbone options
+# ---------------------------------------------------------------------------- #
+_C.MODEL.ITD_FPN = CN()
+_C.MODEL.ITD_FPN.OUT_CHANNELS = 256
+_C.MODEL.ITD_FPN.NORM = ""
+_C.MODEL.ITD_FPN.FUSE_TYPE = "sum"
+
+
+
 # ---------------------------------------------------------------------------- #
 # ResNe[X]t options (ResNets = {ResNet, ResNeXt}
 # Note that parts of a resnet may be used for both the backbone and the head
