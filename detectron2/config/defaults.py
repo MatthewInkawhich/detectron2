@@ -482,6 +482,7 @@ _C.MODEL.ITD_BACKBONE.BODY_CHANNELS = [[64, 64, 256], [256, 64, 256], [256, 64, 
 _C.MODEL.ITD_BACKBONE.RETURN_FEATURES = [False, False, False, False, False, False, True, False, False, False, False, False, True, False, False, True]
 _C.MODEL.ITD_BACKBONE.DOWNSAMPLE_BOUNDS = [[64,4], [64,4], [64,4], [64,4], [64,4], [64,4], [64,4], [64,8], [64,8], [64,8], [64,8], [64,8], [64,8], [64,8], [64,8], [64,8]]
 _C.MODEL.ITD_BACKBONE.NUM_FEATURES = 5
+_C.MODEL.ITD_BACKBONE.FREEZE_STEM = True
 
 # ---------------------------------------------------------------------------- #
 # Inference-Time Dynamic backbone options

@@ -83,3 +83,75 @@ class DetectionCheckpointer(Checkpointer):
                 except ValueError:
                     pass
         return incompatible
+
+
+
+
+class ITDDetectionCheckpointer(Checkpointer):
+    """
+    Same as DetectionCheckpointer, but is capable of loading ITD ImageNet weights.
+    """
+
+    def __init__(self, model, save_dir="", *, save_to_disk=None, **checkpointables):
+        is_main_process = comm.is_main_process()
+        super().__init__(
+            model,
+            save_dir,
+            save_to_disk=is_main_process if save_to_disk is None else save_to_disk,
+            **checkpointables,
+        )
+        if hasattr(self, "path_manager"):
+            self.path_manager = PathManager
+        else:
+            # This could only happen for open source
+            # TODO remove after upgrading fvcore
+            from fvcore.common.file_io import PathManager as g_PathManager
+
+            for handler in PathManager._path_handlers.values():
+                try:
+                    g_PathManager.register_handler(handler)
+                except KeyError:
+                    pass
+
+    def _load_file(self, filename):
+        loaded = super()._load_file(filename)  # load native pth checkpoint
+        if "custominit" in filename:
+            loaded = {"model": loaded["model_sd"], "needs_aligning": True}
+        if "model" not in loaded:
+            loaded = {"model": loaded}
+        return loaded
+
+    def _load_model(self, checkpoint):
+        # If this is a custominit, need to align names first
+        if checkpoint.get("needs_aligning", False):
+            # Align param names
+            aligned_state_dict = {}
+            for k, v in checkpoint["model"].items():
+                # Change body to backbone.bottom_up
+                k = k.replace("body.", "backbone.bottom_up.")
+                # Align batch_norm representation
+                k = k.replace("bn1.", "conv1.norm.")
+                k = k.replace("bn3.", "conv3.norm.")
+                # Align shortcut layer
+                k = k.replace("downsample.0.", "shortcut.")
+                k = k.replace("downsample.1.", "shortcut.norm.")
+                aligned_state_dict[k] = v
+            # Save newly aligned state_dict
+            checkpoint["model"] = aligned_state_dict
+            
+        # for non-caffe2 models, use standard ways to load it
+        incompatible = super()._load_model(checkpoint)
+        if incompatible is None:  # support older versions of fvcore
+            return None
+
+        model_buffers = dict(self.model.named_buffers(recurse=False))
+        for k in ["pixel_mean", "pixel_std"]:
+            # Ignore missing key message about pixel_mean/std.
+            # Though they may be missing in old checkpoints, they will be correctly
+            # initialized from config anyway.
+            if k in model_buffers:
+                try:
+                    incompatible.missing_keys.remove(k)
+                except ValueError:
+                    pass
+        return incompatible

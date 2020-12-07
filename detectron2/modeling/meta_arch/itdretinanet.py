@@ -236,52 +236,52 @@ class ITDRetinaNet(nn.Module):
         """
         # Normalize image tensors and match sizes of all images in the batch
         images = self.preprocess_image(batched_inputs)
-        print("images:", images.tensor.shape)
+        #print("images:", images.tensor, images.tensor.shape)
         # Forward thru backbone to get features dict: {"p3":tensor(B,3,H,W) ..., "p7":tensor(B,3,H,W)}
         features = self.backbone(images.tensor, config_combo)
         # Convert features to list of feature tensors
-        print("features:")
-        for fi, f in enumerate(features):
-            print(fi, f.shape)
+        #print("features:")
+        #for fi, f in enumerate(features):
+        #    print(fi, f.shape)
         # Generate anchors
         anchors = self.anchor_generator(features, images.tensor.shape)
-        print("anchors:")
-        for bi, b in enumerate(anchors):
-            print(bi, b.tensor.shape)
+        #print("anchors:")
+        #for bi, b in enumerate(anchors):
+        #    print(bi, b.tensor.shape)
 
         pred_logits, pred_anchor_deltas = self.head(features)
-        print("pred_logits:")
-        for bi, b in enumerate(pred_logits):
-            print(bi, b.shape)
-        print("pred_anchor_deltas:")
-        for bi, b in enumerate(pred_anchor_deltas):
-            print(bi, b.shape)
+        #print("pred_logits:")
+        #for bi, b in enumerate(pred_logits):
+        #    print(bi, b.shape)
+        #print("pred_anchor_deltas:")
+        #for bi, b in enumerate(pred_anchor_deltas):
+        #    print(bi, b.shape)
         # Transpose the Hi*Wi*A dimension to the middle:
         pred_logits = [permute_to_N_HWA_K(x, self.num_classes) for x in pred_logits]
         pred_anchor_deltas = [permute_to_N_HWA_K(x, 4) for x in pred_anchor_deltas]
-        print("pred_logits:")
-        for bi, b in enumerate(pred_logits):
-            print(bi, b.shape)
-        print("pred_anchor_deltas:")
-        for bi, b in enumerate(pred_anchor_deltas):
-            print(bi, b.shape)
+        #print("pred_logits:")
+        #for bi, b in enumerate(pred_logits):
+        #    print(bi, b.shape)
+        #print("pred_anchor_deltas:")
+        #for bi, b in enumerate(pred_anchor_deltas):
+        #    print(bi, b.shape)
 
         if self.training:
             assert "instances" in batched_inputs[0], "Instance annotations are missing in training!"
             gt_instances = [x["instances"].to(self.device) for x in batched_inputs]
-            print("gt_instances:")
-            for bi, b in enumerate(gt_instances):
-                print(bi, b)
+            #print("gt_instances:")
+            #for bi, b in enumerate(gt_instances):
+            #    print(bi, b)
 
             gt_labels, gt_boxes = self.label_anchors(anchors, gt_instances)
-            print("gt_labels:")
-            for bi, b in enumerate(gt_labels):
-                print(bi, b.shape)
-            print("gt_boxes:")
-            for bi, b in enumerate(gt_boxes):
-                print(bi, b.shape)
+            #print("gt_labels:")
+            #for bi, b in enumerate(gt_labels):
+            #    print(bi, b.shape)
+            #print("gt_boxes:")
+            #for bi, b in enumerate(gt_boxes):
+            #    print(bi, b.shape)
             
-            exit()
+            #exit()
             losses = self.losses(anchors, pred_logits, gt_labels, pred_anchor_deltas, gt_boxes)
 
             if self.vis_period > 0:

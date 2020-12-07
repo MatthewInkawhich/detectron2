@@ -26,7 +26,7 @@ import torch
 from torch.nn.parallel import DistributedDataParallel
 
 import detectron2.utils.comm as comm
-from detectron2.checkpoint import DetectionCheckpointer, PeriodicCheckpointer
+from detectron2.checkpoint import DetectionCheckpointer, ITDDetectionCheckpointer, PeriodicCheckpointer
 from detectron2.config import get_cfg
 from detectron2.data import (
     MetadataCatalog,
@@ -128,9 +128,10 @@ def do_train(cfg, model, resume=False):
     optimizer = build_optimizer(cfg, model)
     scheduler = build_lr_scheduler(cfg, optimizer)
 
-    checkpointer = DetectionCheckpointer(
+    checkpointer = ITDDetectionCheckpointer(
         model, cfg.OUTPUT_DIR, optimizer=optimizer, scheduler=scheduler
     )
+
     start_iter = (
         checkpointer.resume_or_load(cfg.MODEL.WEIGHTS, resume=resume).get("iteration", -1) + 1
     )
@@ -158,17 +159,17 @@ def do_train(cfg, model, resume=False):
         for data, iteration in zip(data_loader, range(start_iter, max_iter)):
             storage.iter = iteration
 
-            print("\n\niteration:", iteration)
-            for i in range(len(data)):
-                for k, v in data[i].items():
-                    print(k, v)
-                    if k == "image":
-                        print(v.shape)
+            #print("\n\niteration:", iteration)
+            #for i in range(len(data)):
+            #    for k, v in data[i].items():
+            #        print(k, v)
+            #        if k == "image":
+            #            print(v.shape)
 
-            config_combo = ((1,2,0,6), (), ())
+            config_combo = ((), (), ())
             loss_dict = model(data, config_combo)
 
-            exit()
+            #exit()
 
             losses = sum(loss_dict.values())
             assert torch.isfinite(losses).all(), loss_dict
@@ -208,6 +209,8 @@ def setup(args):
     cfg = get_cfg()
     cfg.merge_from_file(args.config_file)
     cfg.merge_from_list(args.opts)
+    # Expand user $HOME in cfg.MODEL.WEIGHTS path
+    cfg.MODEL.WEIGHTS = cfg.MODEL.WEIGHTS.replace("~", os.path.expanduser("~"))
     cfg.freeze()
     default_setup(
         cfg, args

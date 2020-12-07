@@ -23,7 +23,7 @@ INPUT:
     - 0.9
     - 0.9
     TYPE: relative_range
-  FORMAT: BGR
+  FORMAT: RGB
   MASK_FORMAT: polygon
   MAX_SIZE_TEST: 1333
   MAX_SIZE_TRAIN: 1333
@@ -266,19 +266,6 @@ MODEL:
     - true
     STEM_CHANNELS: 64
     STRIDE_CONFIG:
-    - - 1
-    - - 0
-      - 3
-    - - 0
-      - 3
-    - - 1
-    - - 0
-      - 3
-    - - 0
-      - 3
-    - - 0
-      - 3
-    - - 1
     - - 0
       - 3
     - - 0
@@ -286,10 +273,27 @@ MODEL:
     - - 0
       - 3
     - - 0
+      - 0
+    - - 0
       - 3
     - - 0
       - 3
-    - - 1
+    - - 0
+      - 3
+    - - 0
+      - 0
+    - - 0
+      - 3
+    - - 0
+      - 3
+    - - 0
+      - 3
+    - - 0
+      - 3
+    - - 0
+      - 3
+    - - 0
+      - 0
     - - 0
       - 3
     - - 0
@@ -332,13 +336,13 @@ MODEL:
       STUFF_AREA_LIMIT: 4096
     INSTANCE_LOSS_WEIGHT: 1.0
   PIXEL_MEAN:
-  - 103.53
-  - 116.28
   - 123.675
+  - 116.28
+  - 103.53
   PIXEL_STD:
-  - 1.0
-  - 1.0
-  - 1.0
+  - 58.395
+  - 57.12
+  - 57.375
   PROPOSAL_GENERATOR:
     MIN_SIZE: 0
     NAME: RPN
@@ -511,7 +515,7 @@ MODEL:
     NAME: SemSegFPNHead
     NORM: GN
     NUM_CLASSES: 54
-  WEIGHTS: ''
+  WEIGHTS: /raid/inkawhmj/.torch/models/custominit_itd_R50.pth.tar
 OUTPUT_DIR: out/ITD-COCO-Detection/play
 SEED: -1
 SOLVER:

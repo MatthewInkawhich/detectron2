@@ -215,6 +215,9 @@ class ITDResNet(Backbone):
             self.block_names.append(name)
             self.return_feature_map[name] = return_features[i]
 
+        if cfg.MODEL.ITD_BACKBONE.FREEZE_STEM:
+            self.stem.freeze()
+
 
     def forward(self, x, config_combo):
         #print("input:", x.shape)
