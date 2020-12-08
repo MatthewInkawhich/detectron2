@@ -38,6 +38,7 @@ class DatasetMapper:
     def __init__(
         self,
         is_train: bool,
+        itd: bool,
         *,
         augmentations: List[Union[T.Augmentation, T.Transform]],
         image_format: str,
@@ -69,6 +70,7 @@ class DatasetMapper:
             assert use_instance_mask, "recompute_boxes requires instance masks"
         # fmt: off
         self.is_train               = is_train
+        self.itd                    = itd
         self.augmentations          = T.AugmentationList(augmentations)
         self.image_format           = image_format
         self.use_instance_mask      = use_instance_mask
@@ -83,7 +85,7 @@ class DatasetMapper:
         logger.info(f"[DatasetMapper] Augmentations used in {mode}: {augmentations}")
 
     @classmethod
-    def from_config(cls, cfg, is_train: bool = True):
+    def from_config(cls, cfg, is_train: bool = True, itd: bool = False):
         augs = utils.build_augmentation(cfg, is_train)
         if cfg.INPUT.CROP.ENABLED and is_train:
             augs.insert(0, T.RandomCrop(cfg.INPUT.CROP.TYPE, cfg.INPUT.CROP.SIZE))
@@ -93,6 +95,7 @@ class DatasetMapper:
 
         ret = {
             "is_train": is_train,
+            "itd": itd,
             "augmentations": augs,
             "image_format": cfg.INPUT.FORMAT,
             "use_instance_mask": cfg.MODEL.MASK_ON,
@@ -150,7 +153,7 @@ class DatasetMapper:
                 dataset_dict, image_shape, transforms, proposal_topk=self.proposal_topk
             )
 
-        if not self.is_train:
+        if not self.is_train and not self.itd: # Return annotations during ITD testing
             # USER: Modify this if you want to keep them for some reason.
             dataset_dict.pop("annotations", None)
             dataset_dict.pop("sem_seg_file_name", None)

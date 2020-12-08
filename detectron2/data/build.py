@@ -384,7 +384,7 @@ def build_detection_train_loader(
     )
 
 
-def _test_loader_from_config(cfg, dataset_name, mapper=None):
+def _test_loader_from_config(cfg, dataset_name, mapper=None, itd=False):
     """
     Uses the given `dataset_name` argument (instead of the names in cfg), because the
     standard practice is to evaluate each test set individually (not combining them).
@@ -399,7 +399,7 @@ def _test_loader_from_config(cfg, dataset_name, mapper=None):
         else None,
     )
     if mapper is None:
-        mapper = DatasetMapper(cfg, False)
+        mapper = DatasetMapper(cfg, False, itd=itd)
     return {"dataset": dataset, "mapper": mapper, "num_workers": cfg.DATALOADER.NUM_WORKERS}
 
 

@@ -43,7 +43,7 @@ from detectron2.evaluation import (
     LVISEvaluator,
     PascalVOCDetectionEvaluator,
     SemSegEvaluator,
-    inference_on_dataset,
+    itd_inference_on_dataset,
     print_csv_format,
 )
 from detectron2.modeling import build_model
@@ -109,11 +109,11 @@ def get_evaluator(cfg, dataset_name, output_folder=None):
 def do_test(cfg, model):
     results = OrderedDict()
     for dataset_name in cfg.DATASETS.TEST:
-        data_loader = build_detection_test_loader(cfg, dataset_name)
+        data_loader = build_detection_test_loader(cfg, dataset_name, itd=True)
         evaluator = get_evaluator(
             cfg, dataset_name, os.path.join(cfg.OUTPUT_DIR, "inference", dataset_name)
         )
-        results_i = inference_on_dataset(model, data_loader, evaluator)
+        results_i = itd_inference_on_dataset(model, data_loader, evaluator)
         results[dataset_name] = results_i
         if comm.is_main_process():
             logger.info("Evaluation results for {} in csv format:".format(dataset_name))
@@ -222,8 +222,8 @@ def main(args):
     cfg = setup(args)
 
     model = build_model(cfg)
-
     logger.info("Model:\n{}".format(model))
+    logger.info("Param Count: {}".format(sum(p.numel() for p in model.parameters())))
     if args.eval_only:
         DetectionCheckpointer(model, save_dir=cfg.OUTPUT_DIR).resume_or_load(
             cfg.MODEL.WEIGHTS, resume=args.resume
