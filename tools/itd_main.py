@@ -21,6 +21,8 @@ It also includes fewer abstraction, therefore is easier to add custom logic.
 
 import logging
 import os
+import random
+import itertools
 from collections import OrderedDict
 import torch
 from torch.nn.parallel import DistributedDataParallel
@@ -58,6 +60,9 @@ from detectron2.utils.events import (
 logger = logging.getLogger("detectron2")
 
 
+############################################################################
+### GET EVALUATOR
+############################################################################
 def get_evaluator(cfg, dataset_name, output_folder=None):
     """
     Create evaluator(s) for a given dataset.
@@ -106,24 +111,125 @@ def get_evaluator(cfg, dataset_name, output_folder=None):
     return DatasetEvaluators(evaluator_list)
 
 
-def do_test(cfg, model):
-    results = OrderedDict()
+
+############################################################################
+### GET VALID OPTION COMBOS
+############################################################################
+def get_valid_combos(cfg):
+    valid_stride_combos = get_valid_stride_combos(cfg)
+    valid_dilation_combos = get_valid_dilation_combos(cfg)
+    valid_ksize_combos = get_valid_ksize_combos(cfg)
+    valid_combos = list(itertools.product(valid_stride_combos, valid_dilation_combos, valid_ksize_combos))
+    return valid_combos
+
+
+def get_valid_stride_combos(cfg):
+    stride_config = cfg.MODEL.ITD_BACKBONE.STRIDE_CONFIG
+    stride_options = cfg.MODEL.ITD_BACKBONE.STRIDE_OPTIONS
+    downsample_bounds = cfg.MODEL.ITD_BACKBONE.DOWNSAMPLE_BOUNDS
+    # Initialize counts tensor
+    num_dyn_blocks = sum([1 if x[0] == 1 else 0 for x in stride_config])
+    num_stride_options = len(stride_options)
+    stride_options_scales = [[1/x[1][0], 1/x[1][1]] if x[0] else x[1] for x in stride_options]
+    # Create list of all possible stride options
+    option_list = list(range(num_stride_options))
+    all_combos = list(itertools.product(option_list, repeat=num_dyn_blocks))
+    valid_combos = []
+    # Trim stride options that are invalid due to bounds
+    for i in range(len(all_combos)):
+        valid = True
+        curr_downsample = [4, 4]  # [dH, dW] Stem downsamples H and W by 4x
+        adaptive_idx = 0
+        # Iterate over network configs to check downsample rate
+        for layer_idx in range(len(stride_config)):
+            # If the curr layer is adaptive
+            if stride_config[layer_idx][0] == 1:
+                stride = stride_options_scales[all_combos[i][adaptive_idx]]
+                curr_downsample = [s1*s2 for s1, s2 in zip(curr_downsample, stride)]
+                adaptive_idx += 1 
+            # If the curr layer is NOT adaptive
+            else:
+                stride_option_idx = stride_config[layer_idx][1]
+                stride = stride_options_scales[stride_option_idx]
+                curr_downsample = [s1*s2 for s1, s2 in zip(curr_downsample, stride)]
+            # Check if curr_downsample is now out of bounds
+            curr_bounds = downsample_bounds[layer_idx]
+            if curr_downsample[0] > curr_bounds[0] or curr_downsample[1] > curr_bounds[0] or curr_downsample[0] < curr_bounds[1] or curr_downsample[1] < curr_bounds[1]:
+                valid = False
+                break   # Out of bounds, do NOT consider this stride combo
+        if valid:
+            valid_combos.append(all_combos[i])
+    return valid_combos
+
+
+def get_valid_dilation_combos(cfg):
+    dilation_config = cfg.MODEL.ITD_BACKBONE.DILATION_CONFIG
+    dilation_options = cfg.MODEL.ITD_BACKBONE.DILATION_OPTIONS
+    # Initialize counts tensor
+    num_dyn_blocks = sum([1 if x[0] == 1 else 0 for x in dilation_config])
+    num_dilation_options = len(dilation_options)
+    # Create list of all possible options
+    option_list = list(range(num_dilation_options))
+    all_combos = list(itertools.product(option_list, repeat=num_dyn_blocks))
+    return all_combos
+
+
+def get_valid_ksize_combos(cfg):
+    ksize_config = cfg.MODEL.ITD_BACKBONE.KSIZE_CONFIG
+    ksize_options = cfg.MODEL.ITD_BACKBONE.KSIZE_OPTIONS
+    # Initialize counts tensor
+    num_dyn_blocks = sum([1 if x[0] == 1 else 0 for x in ksize_config])
+    num_ksize_options = len(ksize_options)
+    # Create list of all possible options
+    option_list = list(range(num_ksize_options))
+    all_combos = list(itertools.product(option_list, repeat=num_dyn_blocks))
+    return all_combos
+
+
+
+############################################################################
+### DO TEST
+############################################################################
+def do_test(cfg, model, valid_combos):
+    results_worst = OrderedDict()
+    results_median = OrderedDict()
+    results_best = OrderedDict()
     for dataset_name in cfg.DATASETS.TEST:
+        # Initialize data_loader object
         data_loader = build_detection_test_loader(cfg, dataset_name, itd=True)
-        evaluator = get_evaluator(
-            cfg, dataset_name, os.path.join(cfg.OUTPUT_DIR, "inference", dataset_name)
-        )
-        results_i = itd_inference_on_dataset(model, data_loader, evaluator)
-        results[dataset_name] = results_i
+        # Initialize 3 separate but identical evaluators
+        evaluator_worst = get_evaluator(cfg, dataset_name, os.path.join(cfg.OUTPUT_DIR, "inference", dataset_name))
+        evaluator_median = get_evaluator(cfg, dataset_name, os.path.join(cfg.OUTPUT_DIR, "inference", dataset_name))
+        evaluator_best = get_evaluator(cfg, dataset_name, os.path.join(cfg.OUTPUT_DIR, "inference", dataset_name))
+        # Run inference and evaluate
+        results_worst_i, results_median_i, results_best_i = itd_inference_on_dataset(model, data_loader, evaluator_worst, evaluator_median, evaluator_best, valid_combos)
+        # Log results in respective OrderedDict
+        results_worst[dataset_name] = results_worst_i
+        results_median[dataset_name] = results_median_i
+        results_best[dataset_name] = results_best_i
+        # Print results
         if comm.is_main_process():
-            logger.info("Evaluation results for {} in csv format:".format(dataset_name))
-            print_csv_format(results_i)
-    if len(results) == 1:
-        results = list(results.values())[0]
-    return results
+            logger.info("\n\n[WORST] Evaluation results for {} in csv format:".format(dataset_name))
+            print_csv_format(results_worst_i)
+            logger.info("\n\n[MEDIAN] Evaluation results for {} in csv format:".format(dataset_name))
+            print_csv_format(results_median_i)
+            logger.info("\n\n[BEST] Evaluation results for {} in csv format:".format(dataset_name))
+            print_csv_format(results_best_i)
+    # Handle length=1 case
+    if len(results_worst) == 1:
+        results_worst = list(results_worst.values())[0]
+    if len(results_median) == 1:
+        results_median = list(results_median.values())[0]
+    if len(results_worst) == 1:
+        results_best = list(results_best.values())[0]
+    return results_worst, results_median, results_best
 
 
-def do_train(cfg, model, resume=False):
+
+############################################################################
+### DO TRAIN
+############################################################################
+def do_train(cfg, model, valid_combos, resume=False):
     model.train()
     optimizer = build_optimizer(cfg, model)
     scheduler = build_lr_scheduler(cfg, optimizer)
@@ -166,12 +272,10 @@ def do_train(cfg, model, resume=False):
             #        if k == "image":
             #            print(v.shape)
 
-            config_combo = ((), (), ())
+            config_combo = select_config_combo(valid_combos)
             loss_dict = model(data, config_combo)
-
-            #exit()
-
             losses = sum(loss_dict.values())
+
             assert torch.isfinite(losses).all(), loss_dict
 
             loss_dict_reduced = {k: v.item() for k, v in comm.reduce_dict(loss_dict).items()}
@@ -190,7 +294,7 @@ def do_train(cfg, model, resume=False):
                 and (iteration + 1) % cfg.TEST.EVAL_PERIOD == 0
                 and iteration != max_iter - 1
             ):
-                do_test(cfg, model)
+                do_test(cfg, model, valid_combos)
                 # Compared to "train_net.py", the test results are not dumped to EventStorage
                 comm.synchronize()
 
@@ -202,6 +306,19 @@ def do_train(cfg, model, resume=False):
             periodic_checkpointer.step(iteration)
 
 
+
+############################################################################
+### DO TRAIN
+############################################################################
+def select_config_combo(valid_combos):
+    choice = random.choice(valid_combos)
+    return choice
+
+
+
+############################################################################
+### SETUP
+############################################################################
 def setup(args):
     """
     Create configs and perform basic setups.
@@ -218,8 +335,15 @@ def setup(args):
     return cfg
 
 
+
+############################################################################
+### MAIN
+############################################################################
 def main(args):
     cfg = setup(args)
+    valid_combos = get_valid_combos(cfg)
+    #valid_combos = [((3, 0, 0, 0), (), ())]
+    logger.info("Valid Combos: {} {}".format(valid_combos, len(valid_combos)))
 
     model = build_model(cfg)
     logger.info("Model:\n{}".format(model))
@@ -228,7 +352,7 @@ def main(args):
         DetectionCheckpointer(model, save_dir=cfg.OUTPUT_DIR).resume_or_load(
             cfg.MODEL.WEIGHTS, resume=args.resume
         )
-        return do_test(cfg, model)
+        return do_test(cfg, model, valid_combos)
 
     distributed = comm.get_world_size() > 1
     if distributed:
@@ -236,8 +360,8 @@ def main(args):
             model, device_ids=[comm.get_local_rank()], broadcast_buffers=False
         )
 
-    do_train(cfg, model, resume=args.resume)
-    return do_test(cfg, model)
+    do_train(cfg, model, valid_combos, resume=args.resume)
+    return do_test(cfg, model, valid_combos)
 
 
 if __name__ == "__main__":

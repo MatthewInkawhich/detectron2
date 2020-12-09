@@ -182,70 +182,80 @@ def inference_on_dataset(model, data_loader, evaluator):
 
 
 
-def itd_inference_on_dataset(model, data_loader, evaluator):
+def itd_inference_on_dataset(model, data_loader, evaluator_worst, evaluator_median, evaluator_best, valid_combos):
     num_devices = get_world_size()
     logger = logging.getLogger(__name__)
     logger.info("Start inference on {} images".format(len(data_loader)))
+    total = len(data_loader)
 
-    total = len(data_loader)  # inference data loader must have a fixed length
-    if evaluator is None:
+    # Check if evaluators are None
+    if evaluator_worst is None:
         # create a no-op evaluator
-        evaluator = DatasetEvaluators([])
-    evaluator.reset()
+        evaluator_worst = DatasetEvaluators([])
+    evaluator_worst.reset()
+    if evaluator_median is None:
+        # create a no-op evaluator
+        evaluator_median = DatasetEvaluators([])
+    evaluator_median.reset()
+    if evaluator_best is None:
+        # create a no-op evaluator
+        evaluator_best = DatasetEvaluators([])
+    evaluator_best.reset()
 
-    num_warmup = min(5, total - 1)
-    start_time = time.perf_counter()
-    total_compute_time = 0
     with inference_context(model), torch.no_grad():
         for idx, inputs in enumerate(data_loader):
-            if idx == num_warmup:
-                start_time = time.perf_counter()
-                total_compute_time = 0
-
-            start_compute_time = time.perf_counter()
             #print("inputs:", inputs)
-            config_combo = ((), (), ())
-            outputs = model(inputs, config_combo)
+            # Initialize empty summaries
+            loss_summary = []
+            results_summary = []
+            # Loop over all valid combos
+            for config_combo in valid_combos:
+                # Forward w/ current config_combo
+                processed_results, loss_dict = model(inputs, config_combo)
+                # Compute scalar loss value
+                losses = sum(loss_dict.values())
+                # Record current loss to loss_summary
+                loss_summary.append(losses.view(1,1))
+                # Record current results to results_summary
+                results_summary.append(processed_results)
+
+            # Convert loss_summary to a tensor
+            loss_summary = torch.cat(loss_summary, dim=1)
+            # Find indices for the combos that lead to highest, median, and lowest loss
+            min_loss_val, min_loss_ind = torch.min(loss_summary, dim=1)
+            median_loss_val, median_loss_ind = torch.median(loss_summary, dim=1)
+            max_loss_val, max_loss_ind = torch.max(loss_summary, dim=1)
+            #print("loss_summary:", loss_summary)
+            #print("min_ind:", min_loss_ind)
+            #print("median_ind:", median_loss_ind)
+            #print("max_ind:", max_loss_ind)
+
+
+            # Synchronize all workers after forward
             if torch.cuda.is_available():
                 torch.cuda.synchronize()
-            total_compute_time += time.perf_counter() - start_compute_time
-            evaluator.process(inputs, outputs)
+            # Process the results in the evaluators
+            evaluator_worst.process(inputs, results_summary[max_loss_ind.item()])
+            evaluator_median.process(inputs, results_summary[median_loss_ind.item()])
+            evaluator_best.process(inputs, results_summary[min_loss_ind.item()])
+            
+            # Occasionally log
+            if idx % 10 == 0:
+                logger.info("Exhaustive ITD inference in progress: [{} / {}]".format(idx+1, total))
 
-            iters_after_start = idx + 1 - num_warmup * int(idx >= num_warmup)
-            seconds_per_img = total_compute_time / iters_after_start
-            if idx >= num_warmup * 2 or seconds_per_img > 5:
-                total_seconds_per_img = (time.perf_counter() - start_time) / iters_after_start
-                eta = datetime.timedelta(seconds=int(total_seconds_per_img * (total - idx - 1)))
-                log_every_n_seconds(
-                    logging.INFO,
-                    "Inference done {}/{}. {:.4f} s / img. ETA={}".format(
-                        idx + 1, total, seconds_per_img, str(eta)
-                    ),
-                    n=5,
-                )
-
-    # Measure the time only for this worker (before the synchronization barrier)
-    total_time = time.perf_counter() - start_time
-    total_time_str = str(datetime.timedelta(seconds=total_time))
-    # NOTE this format is parsed by grep
-    logger.info(
-        "Total inference time: {} ({:.6f} s / img per device, on {} devices)".format(
-            total_time_str, total_time / (total - num_warmup), num_devices
-        )
-    )
-    total_compute_time_str = str(datetime.timedelta(seconds=int(total_compute_time)))
-    logger.info(
-        "Total inference pure compute time: {} ({:.6f} s / img per device, on {} devices)".format(
-            total_compute_time_str, total_compute_time / (total - num_warmup), num_devices
-        )
-    )
-
-    results = evaluator.evaluate()
+    # Call evaluate
+    results_worst = evaluator_worst.evaluate()
+    results_median = evaluator_median.evaluate()
+    results_best = evaluator_best.evaluate()
     # An evaluator may return None when not in main process.
     # Replace it by an empty dict instead to make it easier for downstream code to handle
-    if results is None:
-        results = {}
-    return results
+    if results_worst is None:
+        results_worst = {}
+    if results_median is None:
+        results_median = {}
+    if results_best is None:
+        results_best = {}
+    return results_worst, results_median, results_best
 
 
 

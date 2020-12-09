@@ -242,29 +242,29 @@ class ITDRetinaNet(nn.Module):
         # Convert features to list of feature tensors
         #print("features:")
         #for fi, f in enumerate(features):
-        #    print(fi, f.shape)
+        #    print(fi, f, f.shape)
         # Generate anchors
         anchors = self.anchor_generator(features, images.tensor.shape)
         #print("anchors:")
         #for bi, b in enumerate(anchors):
-        #    print(bi, b.tensor.shape)
+        #    print(bi, b.tensor, b.tensor.shape)
 
         pred_logits, pred_anchor_deltas = self.head(features)
         #print("pred_logits:")
         #for bi, b in enumerate(pred_logits):
-        #    print(bi, b.shape)
+        #    print(bi, b, b.shape)
         #print("pred_anchor_deltas:")
         #for bi, b in enumerate(pred_anchor_deltas):
-        #    print(bi, b.shape)
+        #    print(bi, b, b.shape)
         # Transpose the Hi*Wi*A dimension to the middle:
         pred_logits = [permute_to_N_HWA_K(x, self.num_classes) for x in pred_logits]
         pred_anchor_deltas = [permute_to_N_HWA_K(x, 4) for x in pred_anchor_deltas]
         #print("pred_logits:")
         #for bi, b in enumerate(pred_logits):
-        #    print(bi, b.shape)
+        #    print(bi, b, b.shape)
         #print("pred_anchor_deltas:")
         #for bi, b in enumerate(pred_anchor_deltas):
-        #    print(bi, b.shape)
+        #    print(bi, b, b.shape)
 
         if self.training:
             assert "instances" in batched_inputs[0], "Instance annotations are missing in training!"
@@ -294,6 +294,14 @@ class ITDRetinaNet(nn.Module):
 
             return losses
         else:
+            # In ITD inference, also return losses
+            # IMPORTANT: MUST COMPUTE LOSSES BEFORE CALLING SELF.INFERENCE
+            # IF OUT OF ORDER, PRED_LOGITS CHANGES
+            assert "instances" in batched_inputs[0], "Instance annotations are missing in ITD inference!"
+            gt_instances = [x["instances"].to(self.device) for x in batched_inputs]
+            gt_labels, gt_boxes = self.label_anchors(anchors, gt_instances)
+            losses = self.losses(anchors, pred_logits, gt_labels, pred_anchor_deltas, gt_boxes, itd_inference=True)
+
             results = self.inference(anchors, pred_logits, pred_anchor_deltas, images.image_sizes)
             processed_results = []
             for results_per_image, input_per_image, image_size in zip(
@@ -303,9 +311,15 @@ class ITDRetinaNet(nn.Module):
                 width = input_per_image.get("width", image_size[1])
                 r = detector_postprocess(results_per_image, height, width)
                 processed_results.append({"instances": r})
-            return processed_results
+            return processed_results, losses
 
-    def losses(self, anchors, pred_logits, gt_labels, pred_anchor_deltas, gt_boxes):
+
+    def losses(self, anchors, pred_logits, gt_labels, pred_anchor_deltas, gt_boxes, itd_inference=False):
+        #print("anchors:", anchors)
+        #print("pred_logits:", pred_logits)
+        #print("pred_anchor_deltas:", pred_anchor_deltas)
+        #print("gt_labels:", gt_labels[0], gt_labels[0].shape)
+        #print("gt_boxes:", gt_boxes[0], gt_boxes[0].shape)
         """
         Args:
             anchors (list[Boxes]): a list of #feature level Boxes
@@ -331,7 +345,8 @@ class ITDRetinaNet(nn.Module):
         valid_mask = gt_labels >= 0
         pos_mask = (gt_labels >= 0) & (gt_labels != self.num_classes)
         num_pos_anchors = pos_mask.sum().item()
-        get_event_storage().put_scalar("num_pos_anchors", num_pos_anchors / num_images)
+        if not itd_inference:
+            get_event_storage().put_scalar("num_pos_anchors", num_pos_anchors / num_images)
         self.loss_normalizer = self.loss_normalizer_momentum * self.loss_normalizer + (
             1 - self.loss_normalizer_momentum
         ) * max(num_pos_anchors, 1)

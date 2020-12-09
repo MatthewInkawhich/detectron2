@@ -201,6 +201,7 @@ MODEL:
       - 8
     - - 64
       - 8
+    FREEZE_STEM: true
     KSIZE_CONFIG:
     - - 0
       - 1
