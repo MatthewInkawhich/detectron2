@@ -244,8 +244,11 @@ def itd_inference_on_dataset(model, data_loader, evaluator_worst, evaluator_medi
                 logger.info("Exhaustive ITD inference in progress: [{} / {}]".format(idx+1, total))
 
     # Call evaluate
+    logger.info("\n\n*** WORST ***")
     results_worst = evaluator_worst.evaluate()
+    logger.info("\n\n*** MEDIAN ***")
     results_median = evaluator_median.evaluate()
+    logger.info("\n\n*** BEST ***")
     results_best = evaluator_best.evaluate()
     # An evaluator may return None when not in main process.
     # Replace it by an empty dict instead to make it easier for downstream code to handle

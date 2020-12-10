@@ -384,7 +384,7 @@ def build_detection_train_loader(
     )
 
 
-def _test_loader_from_config(cfg, dataset_name, mapper=None, itd=False):
+def _test_loader_from_config(cfg, dataset_name, mapper=None, itd=False, mini=False):
     """
     Uses the given `dataset_name` argument (instead of the names in cfg), because the
     standard practice is to evaluate each test set individually (not combining them).
@@ -398,6 +398,9 @@ def _test_loader_from_config(cfg, dataset_name, mapper=None, itd=False):
         if cfg.MODEL.LOAD_PROPOSALS
         else None,
     )
+    if mini:
+        subset_size = 100
+        dataset = torch.utils.data.random_split(dataset, [subset_size, len(dataset)-subset_size])[0]
     if mapper is None:
         mapper = DatasetMapper(cfg, False, itd=itd)
     return {"dataset": dataset, "mapper": mapper, "num_workers": cfg.DATALOADER.NUM_WORKERS}

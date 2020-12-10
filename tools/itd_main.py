@@ -196,6 +196,7 @@ def do_test(cfg, model, valid_combos):
     results_best = OrderedDict()
     for dataset_name in cfg.DATASETS.TEST:
         # Initialize data_loader object
+        #data_loader = build_detection_test_loader(cfg, dataset_name, itd=True, mini=True)
         data_loader = build_detection_test_loader(cfg, dataset_name, itd=True)
         # Initialize 3 separate but identical evaluators
         evaluator_worst = get_evaluator(cfg, dataset_name, os.path.join(cfg.OUTPUT_DIR, "inference", dataset_name))
@@ -342,7 +343,7 @@ def setup(args):
 def main(args):
     cfg = setup(args)
     valid_combos = get_valid_combos(cfg)
-    #valid_combos = [((3, 0, 0, 0), (), ())]
+    valid_combos = [((3, 0, 0, 0), (), ())]
     logger.info("Valid Combos: {} {}".format(valid_combos, len(valid_combos)))
 
     model = build_model(cfg)
