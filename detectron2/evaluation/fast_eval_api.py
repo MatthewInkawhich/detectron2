@@ -13,7 +13,7 @@ class COCOeval_opt(COCOeval):
     and accumulate() are implemented in C++ to speedup evaluation
     """
 
-    def evaluate(self):
+    def evaluate(self, quiet=False):
         """
         Run per image evaluation on given images and store results in self.evalImgs_cpp, a
         datastructure that isn't readable from Python but is used by a c++ implementation of
@@ -23,13 +23,15 @@ class COCOeval_opt(COCOeval):
         """
         tic = time.time()
 
-        print("Running per image evaluation...")
+        if not quiet:
+            print("Running per image evaluation...")
         p = self.params
         # add backward compatibility if useSegm is specified in params
         if p.useSegm is not None:
             p.iouType = "segm" if p.useSegm == 1 else "bbox"
             print("useSegm (deprecated) is not None. Running {} evaluation".format(p.iouType))
-        print("Evaluate annotation type *{}*".format(p.iouType))
+        if not quiet:
+            print("Evaluate annotation type *{}*".format(p.iouType))
         p.imgIds = list(np.unique(p.imgIds))
         if p.useCats:
             p.catIds = list(np.unique(p.catIds))
@@ -91,15 +93,17 @@ class COCOeval_opt(COCOeval):
 
         self._paramsEval = copy.deepcopy(self.params)
         toc = time.time()
-        print("COCOeval_opt.evaluate() finished in {:0.2f} seconds.".format(toc - tic))
+        if not quiet:
+            print("COCOeval_opt.evaluate() finished in {:0.2f} seconds.".format(toc - tic))
         # >>>> End of code differences with original COCO API
 
-    def accumulate(self):
+    def accumulate(self, quiet=False):
         """
         Accumulate per image evaluation results and store the result in self.eval.  Does not
         support changing parameter settings from those used by self.evaluate()
         """
-        print("Accumulating evaluation results...")
+        if not quiet:
+            print("Accumulating evaluation results...")
         tic = time.time()
         if not hasattr(self, "_evalImgs_cpp"):
             print("Please run evaluate() first")
@@ -116,4 +120,5 @@ class COCOeval_opt(COCOeval):
         self.eval["precision"] = np.array(self.eval["precision"]).reshape(self.eval["counts"])
         self.eval["scores"] = np.array(self.eval["scores"]).reshape(self.eval["counts"])
         toc = time.time()
-        print("COCOeval_opt.accumulate() finished in {:0.2f} seconds.".format(toc - tic))
+        if not quiet:
+            print("COCOeval_opt.accumulate() finished in {:0.2f} seconds.".format(toc - tic))

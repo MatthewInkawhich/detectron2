@@ -1,11 +1,15 @@
 # Copyright (c) Facebook, Inc. and its affiliates.
 import datetime
+import os
 import logging
 import time
+import math
+import statistics
 from collections import OrderedDict
 from contextlib import contextmanager
 import torch
 
+import detectron2.utils.comm as comm
 from detectron2.utils.comm import get_world_size, is_main_process
 from detectron2.utils.logger import log_every_n_seconds
 
@@ -182,13 +186,17 @@ def inference_on_dataset(model, data_loader, evaluator):
 
 
 
-def itd_inference_on_dataset(model, data_loader, evaluator_worst, evaluator_median, evaluator_best, valid_combos):
+def itd_inference_on_dataset(cfg, model, data_loader, evaluator_tmp, evaluator_worst, evaluator_median, evaluator_best, valid_combos):
     num_devices = get_world_size()
     logger = logging.getLogger(__name__)
     logger.info("Start inference on {} images".format(len(data_loader)))
     total = len(data_loader)
 
     # Check if evaluators are None
+    if evaluator_tmp is None:
+        # create a no-op evaluator
+        evaluator_tmp = DatasetEvaluators([])
+    evaluator_tmp.reset()
     if evaluator_worst is None:
         # create a no-op evaluator
         evaluator_worst = DatasetEvaluators([])
@@ -202,54 +210,216 @@ def itd_inference_on_dataset(model, data_loader, evaluator_worst, evaluator_medi
         evaluator_best = DatasetEvaluators([])
     evaluator_best.reset()
 
+    # Initialize counts tensors
+    num_stride_dyn_blocks = sum([1 if x[0] == 1 else 0 for x in cfg.MODEL.ITD_BACKBONE.STRIDE_CONFIG])
+    num_dilation_dyn_blocks = sum([1 if x[0] == 1 else 0 for x in cfg.MODEL.ITD_BACKBONE.DILATION_CONFIG])
+    num_ksize_dyn_blocks = sum([1 if x[0] == 1 else 0 for x in cfg.MODEL.ITD_BACKBONE.KSIZE_CONFIG])
+    num_stride_options = len(cfg.MODEL.ITD_BACKBONE.STRIDE_OPTIONS)
+    num_dilation_options = len(cfg.MODEL.ITD_BACKBONE.DILATION_OPTIONS)
+    num_ksize_options = len(cfg.MODEL.ITD_BACKBONE.KSIZE_OPTIONS)
+    # BEST
+    stride_choice_counts_best = torch.zeros(num_stride_dyn_blocks, num_stride_options, dtype=torch.int64, device='cuda')
+    dilation_choice_counts_best = torch.zeros(num_dilation_dyn_blocks, num_dilation_options, dtype=torch.int64, device='cuda')
+    ksize_choice_counts_best = torch.zeros(num_ksize_dyn_blocks, num_ksize_options, dtype=torch.int64, device='cuda')
+    # MEDIAN
+    stride_choice_counts_median = torch.zeros(num_stride_dyn_blocks, num_stride_options, dtype=torch.int64, device='cuda')
+    dilation_choice_counts_median = torch.zeros(num_dilation_dyn_blocks, num_dilation_options, dtype=torch.int64, device='cuda')
+    ksize_choice_counts_median = torch.zeros(num_ksize_dyn_blocks, num_ksize_options, dtype=torch.int64, device='cuda')
+    # WORST
+    stride_choice_counts_worst = torch.zeros(num_stride_dyn_blocks, num_stride_options, dtype=torch.int64, device='cuda')
+    dilation_choice_counts_worst = torch.zeros(num_dilation_dyn_blocks, num_dilation_options, dtype=torch.int64, device='cuda')
+    ksize_choice_counts_worst = torch.zeros(num_ksize_dyn_blocks, num_ksize_options, dtype=torch.int64, device='cuda')
+
+    # Initialize truth log
+    truth_log = {}
+
     with inference_context(model), torch.no_grad():
         for idx, inputs in enumerate(data_loader):
+            # Extract img_ids
+            img_ids = [input_dict["image_id"] for input_dict in inputs]
+            # Initialize truth log entry
+            truth_log[img_ids[0]] = []
             #print("inputs:", inputs)
+            #print("img_ids:", img_ids)
             # Initialize empty summaries
-            loss_summary = []
+            ap_summary = []
             results_summary = []
             # Loop over all valid combos
             for config_combo in valid_combos:
                 # Forward w/ current config_combo
                 processed_results, loss_dict = model(inputs, config_combo)
-                # Compute scalar loss value
-                losses = sum(loss_dict.values())
-                # Record current loss to loss_summary
-                loss_summary.append(losses.view(1,1))
                 # Record current results to results_summary
                 results_summary.append(processed_results)
+                #print("\nconfig_combo:", config_combo)
+                #print("processed_results:", processed_results)
+                # Synchronize all workers after forward
+                if torch.cuda.is_available():
+                    torch.cuda.synchronize()
+                # Process the results in the tmp evaluator
+                evaluator_tmp.process(inputs, processed_results)
+                # Call evaluate (quiet)
+                results_tmp = evaluator_tmp.evaluate(img_ids=img_ids, quiet=True)
+                #print("\nresults_tmp:", results_tmp)
+                curr_ap = results_tmp['bbox']['AP']
+                # Check for / correct NaN values
+                if math.isnan(curr_ap):
+                    curr_ap = 0
+                #print("curr_ap:", curr_ap)
+                # Add AP to summary
+                ap_summary.append(curr_ap)
+                # Append to truth log
+                curr_losses = {k: l.item() for k, l in loss_dict.items()}
+                truth_log[img_ids[0]].append([curr_ap, curr_losses])
+                # Reset tmp evaluator
+                evaluator_tmp.reset()
 
-            # Convert loss_summary to a tensor
-            loss_summary = torch.cat(loss_summary, dim=1)
-            # Find indices for the combos that lead to highest, median, and lowest loss
-            min_loss_val, min_loss_ind = torch.min(loss_summary, dim=1)
-            median_loss_val, median_loss_ind = torch.median(loss_summary, dim=1)
-            max_loss_val, max_loss_ind = torch.max(loss_summary, dim=1)
-            #print("loss_summary:", loss_summary)
-            #print("min_ind:", min_loss_ind)
-            #print("median_ind:", median_loss_ind)
-            #print("max_ind:", max_loss_ind)
+            # Convert ap_summary to tensor
+            ap_summary = torch.tensor(ap_summary, device='cuda').view(1,-1)
+            # Find indices for the combos that lead to highest, median, and lowest AP
+            min_ap_val, min_ap_ind = torch.min(ap_summary, dim=1)
+            median_ap_val, median_ap_ind = torch.median(ap_summary, dim=1)
+            max_ap_val, max_ap_ind = torch.max(ap_summary, dim=1)
+            #print("\n\nap_summary:", ap_summary)
+            #print("min_ind:", min_ap_ind)#, results_summary[min_loss_ind.item()])
+            #print("median_ind:", median_ap_ind)#, results_summary[median_loss_ind.item()])
+            #print("max_ind:", max_ap_ind)#, results_summary[max_loss_ind.item()])
 
+            # Record selections
+            # WORST
+            for db_i in range(len(valid_combos[min_ap_ind.item()][0])):
+                stride_choice_counts_worst[db_i][valid_combos[min_ap_ind.item()][0][db_i]] += 1
+            for db_i in range(len(valid_combos[min_ap_ind.item()][1])):
+                dilation_choice_counts_worst[db_i][valid_combos[min_ap_ind.item()][1][db_i]] += 1
+            for db_i in range(len(valid_combos[min_ap_ind.item()][2])):
+                ksize_choice_counts_worst[db_i][valid_combos[min_ap_ind.item()][2][db_i]] += 1
+            # MEDIAN
+            for db_i in range(len(valid_combos[median_ap_ind.item()][0])):
+                stride_choice_counts_median[db_i][valid_combos[median_ap_ind.item()][0][db_i]] += 1
+            for db_i in range(len(valid_combos[median_ap_ind.item()][1])):
+                dilation_choice_counts_median[db_i][valid_combos[median_ap_ind.item()][1][db_i]] += 1
+            for db_i in range(len(valid_combos[median_ap_ind.item()][2])):
+                ksize_choice_counts_median[db_i][valid_combos[median_ap_ind.item()][2][db_i]] += 1
+            # BEST
+            for db_i in range(len(valid_combos[max_ap_ind.item()][0])):
+                stride_choice_counts_best[db_i][valid_combos[max_ap_ind.item()][0][db_i]] += 1
+            for db_i in range(len(valid_combos[max_ap_ind.item()][1])):
+                dilation_choice_counts_best[db_i][valid_combos[max_ap_ind.item()][1][db_i]] += 1
+            for db_i in range(len(valid_combos[max_ap_ind.item()][2])):
+                ksize_choice_counts_best[db_i][valid_combos[max_ap_ind.item()][2][db_i]] += 1
 
             # Synchronize all workers after forward
             if torch.cuda.is_available():
                 torch.cuda.synchronize()
             # Process the results in the evaluators
-            evaluator_worst.process(inputs, results_summary[max_loss_ind.item()])
-            evaluator_median.process(inputs, results_summary[median_loss_ind.item()])
-            evaluator_best.process(inputs, results_summary[min_loss_ind.item()])
+            evaluator_worst.process(inputs, results_summary[min_ap_ind.item()])
+            evaluator_median.process(inputs, results_summary[median_ap_ind.item()])
+            evaluator_best.process(inputs, results_summary[max_ap_ind.item()])
             
             # Occasionally log
             if idx % 10 == 0:
                 logger.info("Exhaustive ITD inference in progress: [{} / {}]".format(idx+1, total))
 
-    # Call evaluate
+
+    # Evaluate worst
     logger.info("\n\n*** WORST ***")
     results_worst = evaluator_worst.evaluate()
+    # Evaluate median
     logger.info("\n\n*** MEDIAN ***")
     results_median = evaluator_median.evaluate()
+    # Evaluate best
     logger.info("\n\n*** BEST ***")
     results_best = evaluator_best.evaluate()
+
+
+    # If distributed, accumulate counts from all devices
+    if num_devices > 1:
+        # Synchronize with a barrier
+        comm.synchronize()
+        # Gather counts tensors from each device into lists
+        all_stride_choice_counts_worst = comm.gather(stride_choice_counts_worst, dst=0)
+        all_stride_choice_counts_median = comm.gather(stride_choice_counts_median, dst=0)
+        all_stride_choice_counts_best = comm.gather(stride_choice_counts_best, dst=0)
+        all_dilation_choice_counts_worst = comm.gather(dilation_choice_counts_worst, dst=0)
+        all_dilation_choice_counts_median = comm.gather(dilation_choice_counts_median, dst=0)
+        all_dilation_choice_counts_best = comm.gather(dilation_choice_counts_best, dst=0)
+        all_ksize_choice_counts_worst = comm.gather(ksize_choice_counts_worst, dst=0)
+        all_ksize_choice_counts_median = comm.gather(ksize_choice_counts_median, dst=0)
+        all_ksize_choice_counts_best = comm.gather(ksize_choice_counts_best, dst=0)
+        # Gather truth_log
+        all_truth_logs = comm.gather(truth_log, dst=0)
+
+        if comm.is_main_process():
+            # Move all tensors onto cpu
+            all_stride_choice_counts_worst = [t.to('cpu') for t in all_stride_choice_counts_worst]
+            all_stride_choice_counts_median = [t.to('cpu') for t in all_stride_choice_counts_median]
+            all_stride_choice_counts_best = [t.to('cpu') for t in all_stride_choice_counts_best]
+            all_dilation_choice_counts_worst = [t.to('cpu') for t in all_dilation_choice_counts_worst]
+            all_dilation_choice_counts_median = [t.to('cpu') for t in all_dilation_choice_counts_median]
+            all_dilation_choice_counts_best = [t.to('cpu') for t in all_dilation_choice_counts_best]
+            all_ksize_choice_counts_worst = [t.to('cpu') for t in all_ksize_choice_counts_worst]
+            all_ksize_choice_counts_median = [t.to('cpu') for t in all_ksize_choice_counts_median]
+            all_ksize_choice_counts_best = [t.to('cpu') for t in all_ksize_choice_counts_best]
+            # Sum counts from each device
+            total_stride_choice_counts_worst = torch.sum(torch.cat(all_stride_choice_counts_worst, dim=0), dim=0, keepdim=True)
+            total_stride_choice_counts_median = torch.sum(torch.cat(all_stride_choice_counts_median, dim=0), dim=0, keepdim=True)
+            total_stride_choice_counts_best = torch.sum(torch.cat(all_stride_choice_counts_best, dim=0), dim=0, keepdim=True)
+            total_dilation_choice_counts_worst = torch.sum(torch.cat(all_dilation_choice_counts_worst, dim=0), dim=0, keepdim=True)
+            total_dilation_choice_counts_median = torch.sum(torch.cat(all_dilation_choice_counts_median, dim=0), dim=0, keepdim=True)
+            total_dilation_choice_counts_best = torch.sum(torch.cat(all_dilation_choice_counts_best, dim=0), dim=0, keepdim=True)
+            total_ksize_choice_counts_worst = torch.sum(torch.cat(all_ksize_choice_counts_worst, dim=0), dim=0, keepdim=True)
+            total_ksize_choice_counts_median = torch.sum(torch.cat(all_ksize_choice_counts_median, dim=0), dim=0, keepdim=True)
+            total_ksize_choice_counts_best = torch.sum(torch.cat(all_ksize_choice_counts_best, dim=0), dim=0, keepdim=True)
+            # Combine truth_logs
+            total_truth_log = {}
+            for tl in all_truth_logs:
+                total_truth_log.update(tl)
+
+    # If not distributed, just rename to make consistent
+    else:
+        total_stride_choice_counts_worst = stride_choice_counts_worst.to('cpu')
+        total_stride_choice_counts_median = stride_choice_counts_median.to('cpu')
+        total_stride_choice_counts_best = stride_choice_counts_best.to('cpu')
+        total_dilation_choice_counts_worst = dilation_choice_counts_worst.to('cpu')
+        total_dilation_choice_counts_median = dilation_choice_counts_median.to('cpu')
+        total_dilation_choice_counts_best = dilation_choice_counts_best.to('cpu')
+        total_ksize_choice_counts_worst = ksize_choice_counts_worst.to('cpu')
+        total_ksize_choice_counts_median = ksize_choice_counts_median.to('cpu')
+        total_ksize_choice_counts_best = ksize_choice_counts_best.to('cpu')
+        total_truth_log = truth_log
+
+    # Display total counts
+    if num_devices == 1 or comm.is_main_process():
+        print("\n\nChoice Counts (WORST):")
+        for i in range(total_stride_choice_counts_worst.shape[0]):
+            print("Stride Block:   ", i, total_stride_choice_counts_worst[i])
+        for i in range(total_dilation_choice_counts_worst.shape[0]):
+            print("Dilation Block: ", i, total_dilation_choice_counts_worst[i])
+        for i in range(total_ksize_choice_counts_worst.shape[0]):
+            print("Ksize Block:    ", i, total_ksize_choice_counts_worst[i])
+
+        print("\n\nChoice Counts (MEDIAN):")
+        for i in range(total_stride_choice_counts_median.shape[0]):
+            print("Stride Block:   ", i, total_stride_choice_counts_median[i])
+        for i in range(total_dilation_choice_counts_median.shape[0]):
+            print("Dilation Block: ", i, total_dilation_choice_counts_median[i])
+        for i in range(total_ksize_choice_counts_median.shape[0]):
+            print("Ksize Block:    ", i, total_ksize_choice_counts_median[i])
+
+        print("\n\nChoice Counts (BEST):")
+        for i in range(total_stride_choice_counts_best.shape[0]):
+            print("Stride Block:   ", i, total_stride_choice_counts_best[i])
+        for i in range(total_dilation_choice_counts_best.shape[0]):
+            print("Dilation Block: ", i, total_dilation_choice_counts_best[i])
+        for i in range(total_ksize_choice_counts_best.shape[0]):
+            print("Ksize Block:    ", i, total_ksize_choice_counts_best[i])
+        print("\n\n")
+
+        # Save truth log to file
+        truth_log_filepath = os.path.join(cfg.OUTPUT_DIR, "truth_log.pth")
+        print("Saving truth_log to: {} ".format(truth_log_filepath))
+        torch.save(total_truth_log, truth_log_filepath)
+
+
     # An evaluator may return None when not in main process.
     # Replace it by an empty dict instead to make it easier for downstream code to handle
     if results_worst is None:

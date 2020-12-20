@@ -63,14 +63,14 @@ logger = logging.getLogger("detectron2")
 ############################################################################
 ### GET EVALUATOR
 ############################################################################
-def get_evaluator(cfg, dataset_name, output_folder=None):
+def get_evaluator(cfg, dataset_name, output_folder=None, quiet=False):
     """
     Create evaluator(s) for a given dataset.
     This uses the special metadata "evaluator_type" associated with each builtin dataset.
     For your own dataset, you can simply create an evaluator manually in your
     script and do not have to worry about the hacky if-else logic here.
     """
-    if output_folder is None:
+    if output_folder is None and not quiet:
         output_folder = os.path.join(cfg.OUTPUT_DIR, "inference")
     evaluator_list = []
     evaluator_type = MetadataCatalog.get(dataset_name).evaluator_type
@@ -196,14 +196,15 @@ def do_test(cfg, model, valid_combos):
     results_best = OrderedDict()
     for dataset_name in cfg.DATASETS.TEST:
         # Initialize data_loader object
-        #data_loader = build_detection_test_loader(cfg, dataset_name, itd=True, mini=True)
-        data_loader = build_detection_test_loader(cfg, dataset_name, itd=True)
+        data_loader = build_detection_test_loader(cfg, dataset_name, itd=True, mini=True)
+        #data_loader = build_detection_test_loader(cfg, dataset_name, itd=True)
         # Initialize 3 separate but identical evaluators
-        evaluator_worst = get_evaluator(cfg, dataset_name, os.path.join(cfg.OUTPUT_DIR, "inference", dataset_name))
-        evaluator_median = get_evaluator(cfg, dataset_name, os.path.join(cfg.OUTPUT_DIR, "inference", dataset_name))
-        evaluator_best = get_evaluator(cfg, dataset_name, os.path.join(cfg.OUTPUT_DIR, "inference", dataset_name))
+        evaluator_tmp = get_evaluator(cfg, dataset_name, quiet=True)
+        evaluator_worst = get_evaluator(cfg, dataset_name, os.path.join(cfg.OUTPUT_DIR, "inference", dataset_name, "worst"))
+        evaluator_median = get_evaluator(cfg, dataset_name, os.path.join(cfg.OUTPUT_DIR, "inference", dataset_name, "median"))
+        evaluator_best = get_evaluator(cfg, dataset_name, os.path.join(cfg.OUTPUT_DIR, "inference", dataset_name, "best"))
         # Run inference and evaluate
-        results_worst_i, results_median_i, results_best_i = itd_inference_on_dataset(model, data_loader, evaluator_worst, evaluator_median, evaluator_best, valid_combos)
+        results_worst_i, results_median_i, results_best_i = itd_inference_on_dataset(cfg, model, data_loader, evaluator_tmp, evaluator_worst, evaluator_median, evaluator_best, valid_combos)
         # Log results in respective OrderedDict
         results_worst[dataset_name] = results_worst_i
         results_median[dataset_name] = results_median_i
@@ -343,7 +344,7 @@ def setup(args):
 def main(args):
     cfg = setup(args)
     valid_combos = get_valid_combos(cfg)
-    valid_combos = [((3, 0, 0, 0), (), ())]
+    #valid_combos = [((3, 0, 0, 0), (), ())]
     logger.info("Valid Combos: {} {}".format(valid_combos, len(valid_combos)))
 
     model = build_model(cfg)

@@ -153,12 +153,12 @@ class COCOEvaluator(DatasetEvaluator):
                 prediction["proposals"] = output["proposals"].to(self._cpu_device)
             self._predictions.append(prediction)
 
-    def evaluate(self, img_ids=None):
+    def evaluate(self, img_ids=None, quiet=False):
         """
         Args:
             img_ids: a list of image IDs to evaluate on. Default to None for the whole dataset
         """
-        if self._distributed:
+        if self._distributed and not quiet:
             comm.synchronize()
             predictions = comm.gather(self._predictions, dst=0)
             predictions = list(itertools.chain(*predictions))
@@ -182,16 +182,17 @@ class COCOEvaluator(DatasetEvaluator):
         if "proposals" in predictions[0]:
             self._eval_box_proposals(predictions)
         if "instances" in predictions[0]:
-            self._eval_predictions(set(self._tasks), predictions, img_ids=img_ids)
+            self._eval_predictions(set(self._tasks), predictions, img_ids=img_ids, quiet=quiet)
         # Copy so the caller can do whatever with results
         return copy.deepcopy(self._results)
 
-    def _eval_predictions(self, tasks, predictions, img_ids=None):
+    def _eval_predictions(self, tasks, predictions, img_ids=None, quiet=False):
         """
         Evaluate predictions on the given tasks.
         Fill self._results with the metrics of the tasks.
         """
-        self._logger.info("Preparing results for COCO format ...")
+        if not quiet:
+            self._logger.info("Preparing results for COCO format ...")
         coco_results = list(itertools.chain(*[x["instances"] for x in predictions]))
 
         # unmap the category ids for COCO
@@ -219,11 +220,13 @@ class COCOEvaluator(DatasetEvaluator):
             self._logger.info("Annotations are not available for evaluation.")
             return
 
-        self._logger.info(
-            "Evaluating predictions with {} COCO API...".format(
-                "unofficial" if self._use_fast_impl else "official"
+        if not quiet:
+            self._logger.info(
+                "Evaluating predictions with {} COCO API...".format(
+                    "unofficial" if self._use_fast_impl else "official"
+                )
             )
-        )
+
         for task in sorted(tasks):
             coco_eval = (
                 _evaluate_predictions_on_coco(
@@ -233,13 +236,14 @@ class COCOEvaluator(DatasetEvaluator):
                     kpt_oks_sigmas=self._kpt_oks_sigmas,
                     use_fast_impl=self._use_fast_impl,
                     img_ids=img_ids,
+                    quiet=quiet,
                 )
                 if len(coco_results) > 0
                 else None  # cocoapi does not handle empty results very well
             )
 
             res = self._derive_coco_results(
-                coco_eval, task, class_names=self._metadata.get("thing_classes")
+                coco_eval, task, class_names=self._metadata.get("thing_classes"), quiet=quiet,
             )
             self._results[task] = res
 
@@ -282,7 +286,7 @@ class COCOEvaluator(DatasetEvaluator):
         self._logger.info("Proposal metrics: \n" + create_small_table(res))
         self._results["box_proposals"] = res
 
-    def _derive_coco_results(self, coco_eval, iou_type, class_names=None):
+    def _derive_coco_results(self, coco_eval, iou_type, class_names=None, quiet=False):
         """
         Derive the desired score numbers from summarized COCOeval.
 
@@ -311,11 +315,12 @@ class COCOEvaluator(DatasetEvaluator):
             metric: float(coco_eval.stats[idx] * 100 if coco_eval.stats[idx] >= 0 else "nan")
             for idx, metric in enumerate(metrics)
         }
-        self._logger.info(
-            "Evaluation results for {}: \n".format(iou_type) + create_small_table(results)
-        )
-        if not np.isfinite(sum(results.values())):
-            self._logger.info("Some metrics cannot be computed and is shown as NaN.")
+        if not quiet:
+            self._logger.info(
+                "Evaluation results for {}: \n".format(iou_type) + create_small_table(results)
+            )
+            if not np.isfinite(sum(results.values())):
+                self._logger.info("Some metrics cannot be computed and is shown as NaN.")
 
         if class_names is None or len(class_names) <= 1:
             return results
@@ -334,18 +339,19 @@ class COCOEvaluator(DatasetEvaluator):
             ap = np.mean(precision) if precision.size else float("nan")
             results_per_category.append(("{}".format(name), float(ap * 100)))
 
-        # tabulate it
-        N_COLS = min(6, len(results_per_category) * 2)
-        results_flatten = list(itertools.chain(*results_per_category))
-        results_2d = itertools.zip_longest(*[results_flatten[i::N_COLS] for i in range(N_COLS)])
-        table = tabulate(
-            results_2d,
-            tablefmt="pipe",
-            floatfmt=".3f",
-            headers=["category", "AP"] * (N_COLS // 2),
-            numalign="left",
-        )
-        self._logger.info("Per-category {} AP: \n".format(iou_type) + table)
+        if not quiet:
+            # tabulate it
+            N_COLS = min(6, len(results_per_category) * 2)
+            results_flatten = list(itertools.chain(*results_per_category))
+            results_2d = itertools.zip_longest(*[results_flatten[i::N_COLS] for i in range(N_COLS)])
+            table = tabulate(
+                results_2d,
+                tablefmt="pipe",
+                floatfmt=".3f",
+                headers=["category", "AP"] * (N_COLS // 2),
+                numalign="left",
+            )
+            self._logger.info("Per-category {} AP: \n".format(iou_type) + table)
 
         results.update({"AP-" + name: ap for name, ap in results_per_category})
         return results
@@ -527,7 +533,7 @@ def _evaluate_box_proposals(dataset_predictions, coco_api, thresholds=None, area
 
 
 def _evaluate_predictions_on_coco(
-    coco_gt, coco_results, iou_type, kpt_oks_sigmas=None, use_fast_impl=True, img_ids=None
+    coco_gt, coco_results, iou_type, kpt_oks_sigmas=None, use_fast_impl=True, img_ids=None, quiet=False,
 ):
     """
     Evaluate the coco results using COCOEval API.
@@ -543,7 +549,7 @@ def _evaluate_predictions_on_coco(
         for c in coco_results:
             c.pop("bbox", None)
 
-    coco_dt = coco_gt.loadRes(coco_results)
+    coco_dt = coco_gt.loadRes(coco_results, quiet=quiet)
     coco_eval = (COCOeval_opt if use_fast_impl else COCOeval)(coco_gt, coco_dt, iou_type)
     if img_ids is not None:
         coco_eval.params.imgIds = img_ids
@@ -566,8 +572,8 @@ def _evaluate_predictions_on_coco(
             "http://cocodataset.org/#keypoints-eval."
         )
 
-    coco_eval.evaluate()
-    coco_eval.accumulate()
-    coco_eval.summarize()
+    coco_eval.evaluate(quiet=quiet)
+    coco_eval.accumulate(quiet=quiet)
+    coco_eval.summarize(quiet=quiet)
 
     return coco_eval
