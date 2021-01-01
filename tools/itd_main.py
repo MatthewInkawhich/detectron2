@@ -345,6 +345,7 @@ def main(args):
     cfg = setup(args)
     valid_combos = get_valid_combos(cfg)
     #valid_combos = [((3, 0, 0, 0), (), ())]
+    #valid_combos = [((), (), (3, 3, 3, 3))]
     logger.info("Valid Combos: {} {}".format(valid_combos, len(valid_combos)))
 
     model = build_model(cfg)

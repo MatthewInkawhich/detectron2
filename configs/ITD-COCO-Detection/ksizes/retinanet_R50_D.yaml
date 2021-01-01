@@ -29,4 +29,4 @@ INPUT:
   FORMAT: "RGB"
   MIN_SIZE_TRAIN: (640, 672, 704, 736, 768, 800)
 VERSION: 2
-OUTPUT_DIR: "out/ITD-COCO-Detection/dilations/retinanet_R50_D"
+OUTPUT_DIR: "out/ITD-COCO-Detection/ksizes/retinanet_R50_D"

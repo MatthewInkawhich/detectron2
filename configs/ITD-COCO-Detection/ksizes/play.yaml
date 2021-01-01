@@ -8,7 +8,7 @@ MODEL:
   ITD_BACKBONE:
     STRIDE_CONFIG: [[0,3], [0,3], [0,3], [0,0], [0,3], [0,3], [0,3], [0,0], [0,3], [0,3], [0,3], [0,3], [0,3], [0,0], [0,3], [0,3]]
     DILATION_CONFIG: [[0,0], [0,0], [0,0], [0,0], [0,0], [0,0], [0,0], [0,0], [0,0], [0,0], [0,0], [0,0], [0,0], [0,0], [0,0], [0,0]]
-    KSIZE_CONFIG: [[0,1], [0,1], [0,1], [0,1], [0,1], [0,1], [0,1], [1], [0,1], [0,1], [0,1], [0,1], [0,1], [1], [0,1], [0,1]]
+    KSIZE_CONFIG: [[1], [0,1], [0,1], [0,1], [0,1], [0,1], [0,1], [0,1], [0,1], [0,1], [0,1], [0,1], [0,1], [1], [0,1], [0,1]]
     FREEZE_STEM: True
   ANCHOR_GENERATOR:
     NAME: "ITDDefaultAnchorGenerator"
@@ -29,4 +29,4 @@ INPUT:
   FORMAT: "RGB"
   MIN_SIZE_TRAIN: (640, 672, 704, 736, 768, 800)
 VERSION: 2
-OUTPUT_DIR: "out/ITD-COCO-Detection/ksizes/retinanet_R50_CD"
+OUTPUT_DIR: "out/ITD-COCO-Detection/ksizes/play"

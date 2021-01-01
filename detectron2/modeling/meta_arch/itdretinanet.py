@@ -265,6 +265,7 @@ class ITDRetinaNet(nn.Module):
         #print("pred_anchor_deltas:")
         #for bi, b in enumerate(pred_anchor_deltas):
         #    print(bi, b, b.shape)
+        
 
         if self.training:
             assert "instances" in batched_inputs[0], "Instance annotations are missing in training!"
@@ -311,6 +312,9 @@ class ITDRetinaNet(nn.Module):
                 width = input_per_image.get("width", image_size[1])
                 r = detector_postprocess(results_per_image, height, width)
                 processed_results.append({"instances": r})
+
+            #print("processed_results:", processed_results)
+            #exit()
             return processed_results, losses
 
 

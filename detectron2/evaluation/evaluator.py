@@ -350,25 +350,25 @@ def itd_inference_on_dataset(cfg, model, data_loader, evaluator_tmp, evaluator_w
 
         if comm.is_main_process():
             # Move all tensors onto cpu
-            all_stride_choice_counts_worst = [t.to('cpu') for t in all_stride_choice_counts_worst]
-            all_stride_choice_counts_median = [t.to('cpu') for t in all_stride_choice_counts_median]
-            all_stride_choice_counts_best = [t.to('cpu') for t in all_stride_choice_counts_best]
-            all_dilation_choice_counts_worst = [t.to('cpu') for t in all_dilation_choice_counts_worst]
-            all_dilation_choice_counts_median = [t.to('cpu') for t in all_dilation_choice_counts_median]
-            all_dilation_choice_counts_best = [t.to('cpu') for t in all_dilation_choice_counts_best]
-            all_ksize_choice_counts_worst = [t.to('cpu') for t in all_ksize_choice_counts_worst]
-            all_ksize_choice_counts_median = [t.to('cpu') for t in all_ksize_choice_counts_median]
-            all_ksize_choice_counts_best = [t.to('cpu') for t in all_ksize_choice_counts_best]
+            all_stride_choice_counts_worst = [t.to('cpu').unsqueeze(0) for t in all_stride_choice_counts_worst]
+            all_stride_choice_counts_median = [t.to('cpu').unsqueeze(0) for t in all_stride_choice_counts_median]
+            all_stride_choice_counts_best = [t.to('cpu').unsqueeze(0) for t in all_stride_choice_counts_best]
+            all_dilation_choice_counts_worst = [t.to('cpu').unsqueeze(0) for t in all_dilation_choice_counts_worst]
+            all_dilation_choice_counts_median = [t.to('cpu').unsqueeze(0) for t in all_dilation_choice_counts_median]
+            all_dilation_choice_counts_best = [t.to('cpu').unsqueeze(0) for t in all_dilation_choice_counts_best]
+            all_ksize_choice_counts_worst = [t.to('cpu').unsqueeze(0) for t in all_ksize_choice_counts_worst]
+            all_ksize_choice_counts_median = [t.to('cpu').unsqueeze(0) for t in all_ksize_choice_counts_median]
+            all_ksize_choice_counts_best = [t.to('cpu').unsqueeze(0) for t in all_ksize_choice_counts_best]
             # Sum counts from each device
-            total_stride_choice_counts_worst = torch.sum(torch.cat(all_stride_choice_counts_worst, dim=0), dim=0, keepdim=True)
-            total_stride_choice_counts_median = torch.sum(torch.cat(all_stride_choice_counts_median, dim=0), dim=0, keepdim=True)
-            total_stride_choice_counts_best = torch.sum(torch.cat(all_stride_choice_counts_best, dim=0), dim=0, keepdim=True)
-            total_dilation_choice_counts_worst = torch.sum(torch.cat(all_dilation_choice_counts_worst, dim=0), dim=0, keepdim=True)
-            total_dilation_choice_counts_median = torch.sum(torch.cat(all_dilation_choice_counts_median, dim=0), dim=0, keepdim=True)
-            total_dilation_choice_counts_best = torch.sum(torch.cat(all_dilation_choice_counts_best, dim=0), dim=0, keepdim=True)
-            total_ksize_choice_counts_worst = torch.sum(torch.cat(all_ksize_choice_counts_worst, dim=0), dim=0, keepdim=True)
-            total_ksize_choice_counts_median = torch.sum(torch.cat(all_ksize_choice_counts_median, dim=0), dim=0, keepdim=True)
-            total_ksize_choice_counts_best = torch.sum(torch.cat(all_ksize_choice_counts_best, dim=0), dim=0, keepdim=True)
+            total_stride_choice_counts_worst = torch.sum(torch.cat(all_stride_choice_counts_worst, dim=0), dim=0)
+            total_stride_choice_counts_median = torch.sum(torch.cat(all_stride_choice_counts_median, dim=0), dim=0)
+            total_stride_choice_counts_best = torch.sum(torch.cat(all_stride_choice_counts_best, dim=0), dim=0)
+            total_dilation_choice_counts_worst = torch.sum(torch.cat(all_dilation_choice_counts_worst, dim=0), dim=0)
+            total_dilation_choice_counts_median = torch.sum(torch.cat(all_dilation_choice_counts_median, dim=0), dim=0)
+            total_dilation_choice_counts_best = torch.sum(torch.cat(all_dilation_choice_counts_best, dim=0), dim=0)
+            total_ksize_choice_counts_worst = torch.sum(torch.cat(all_ksize_choice_counts_worst, dim=0), dim=0)
+            total_ksize_choice_counts_median = torch.sum(torch.cat(all_ksize_choice_counts_median, dim=0), dim=0)
+            total_ksize_choice_counts_best = torch.sum(torch.cat(all_ksize_choice_counts_best, dim=0), dim=0)
             # Combine truth_logs
             total_truth_log = {}
             for tl in all_truth_logs:

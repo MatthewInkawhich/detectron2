@@ -130,6 +130,8 @@ class ITDBottleneckBlock(CNNBlockBase):
             out = F.conv_transpose2d(conv1_out, resized_conv2_weight.flip([2, 3]).permute(1, 0, 2, 3), stride=stride, padding=padding, output_padding=output_padding, dilation=dilation)
         else:
             out = F.conv2d(conv1_out, resized_conv2_weight, stride=stride, padding=padding, dilation=dilation)
+        # Scale activations to account for kernel size interpolation
+        out = out * ((3 ** 2) / (ksize[0] * ksize[1]))
         out = self.bn2(out)
         out = F.relu_(out)
 

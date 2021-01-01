@@ -399,7 +399,7 @@ def _test_loader_from_config(cfg, dataset_name, mapper=None, itd=False, mini=Fal
         else None,
     )
     if mini:
-        subset_size = 100
+        subset_size = 20
         dataset = torch.utils.data.random_split(dataset, [subset_size, len(dataset)-subset_size])[0]
     if mapper is None:
         mapper = DatasetMapper(cfg, False, itd=itd)
